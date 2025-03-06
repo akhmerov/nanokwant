@@ -4,6 +4,13 @@ from typing import Union, Callable
 HamiltonianType = dict[int, dict[str, np.ndarray]]
 
 
+def _hamiltonian_dtype(system: HamiltonianType, params: dict[str, complex | Callable]) -> np.dtype:
+    """Determine the common dtype of all term matrices and all parameter values."""
+    term_dtypes = [term_matrix.dtype for terms in system.values() for term_matrix in terms.values()]
+    param_dtypes = [np.asarray(value).dtype if not callable(value) else np.asarray(value(0)).dtype for value in params.values()]
+    return np.result_type(*term_dtypes, *param_dtypes)
+
+
 def hamiltonian(
     system: HamiltonianType,
     num_sites: int,
@@ -26,8 +33,8 @@ def matrix_hamiltonian(
     """
     # Initialize the Hamiltonian matrix
     dim = next(iter(system[0].values())).shape[0]
-    # TODO: determine type by using common type of all term matrices and all values
-    H = np.zeros((num_sites, num_sites, dim, dim), dtype=np.complex128)
+    dtype = _hamiltonian_dtype(system, params)
+    H = np.zeros((num_sites, num_sites, dim, dim), dtype=dtype)
 
     # Fill the Hamiltonian matrix
     for hop_length, terms in system.items():
