@@ -1,38 +1,53 @@
 import numpy as np
-from nanokwant.nanokwant import _hamiltonian_dtype, matrix_hamiltonian, hamiltonian, _to_banded
+from nanokwant.nanokwant import (
+    _hamiltonian_dtype,
+    matrix_hamiltonian,
+    hamiltonian,
+    _to_banded,
+)
 from scipy.linalg import eig_banded
+
 
 def test__hamiltonian_dtype():
     test_cases = [
-        ({
-            0: {"mu": np.eye(2, dtype=np.float64)},
-        },
-        {"mu": 1.0},
-        np.float64),
-
-        ({
-            0: {"mu": np.eye(2, dtype=np.float64)},
-        },
-        {"mu": 1.0 + 1j},
-        np.complex128),
-
-        ({
-            0: {"mu": np.eye(2, dtype=np.float64)},
-        },
-        {"mu": lambda x: 1.0},
-        np.float64),
-
-        ({
-            0: {"mu": np.eye(2, dtype=np.float64)},
-        },
-        {"mu": lambda x: 1.0 + 1j},
-        np.complex128),
-
-        ({
-            0: {"mu": np.eye(2, dtype=np.float64), "Ez": np.diag([1, -1]).astype(np.complex128)},
-        },
-        {"mu": 1.0, "Ez": 1.0 + 1j},
-        np.complex128),
+        (
+            {
+                0: {"mu": np.eye(2, dtype=np.float64)},
+            },
+            {"mu": 1.0},
+            np.float64,
+        ),
+        (
+            {
+                0: {"mu": np.eye(2, dtype=np.float64)},
+            },
+            {"mu": 1.0 + 1j},
+            np.complex128,
+        ),
+        (
+            {
+                0: {"mu": np.eye(2, dtype=np.float64)},
+            },
+            {"mu": lambda x: 1.0},
+            np.float64,
+        ),
+        (
+            {
+                0: {"mu": np.eye(2, dtype=np.float64)},
+            },
+            {"mu": lambda x: 1.0 + 1j},
+            np.complex128,
+        ),
+        (
+            {
+                0: {
+                    "mu": np.eye(2, dtype=np.float64),
+                    "Ez": np.diag([1, -1]).astype(np.complex128),
+                },
+            },
+            {"mu": 1.0, "Ez": 1.0 + 1j},
+            np.complex128,
+        ),
     ]
 
     for system, params, expected_dtype in test_cases:
@@ -48,7 +63,7 @@ def test_matrix_hamiltonian():
         },
         1: {
             "t": np.eye(2),
-        }
+        },
     }
     num_sites = 3
     params = {
@@ -56,14 +71,16 @@ def test_matrix_hamiltonian():
         "Ez": (lambda x: 1.0 + 1j * (x == 0)),
         "t": (lambda x: x + 1),
     }
-    expected_H = np.array([
-        [2 + 1j, 0, 1, 0, 0, 0],
-        [0, -1j, 0, 1, 0, 0],
-        [1, 0, 2, 0, 2, 0],
-        [0, 1, 0, 0, 0, 2],
-        [0, 0, 2, 0, 2, 0],
-        [0, 0, 0, 2, 0, 0],
-    ])
+    expected_H = np.array(
+        [
+            [2 + 1j, 0, 1, 0, 0, 0],
+            [0, -1j, 0, 1, 0, 0],
+            [1, 0, 2, 0, 2, 0],
+            [0, 1, 0, 0, 0, 2],
+            [0, 0, 2, 0, 2, 0],
+            [0, 0, 0, 2, 0, 0],
+        ]
+    )
     H = matrix_hamiltonian(system, num_sites, params)
     np.testing.assert_equal(H, expected_H)
 
@@ -88,7 +105,7 @@ def test_hamiltonian():
         },
         1: {
             "t": np.eye(2),
-        }
+        },
     }
     num_sites = 3
     params = {
@@ -96,8 +113,8 @@ def test_hamiltonian():
         "Ez": lambda x: np.sin(x),
         "t": 1.0,
     }
-    H, (l, u) = hamiltonian(system, num_sites, params)
-    eigvals_banded = eig_banded(H[:u + 1], eigvals_only=True)
+    H, (l, u) = hamiltonian(system, num_sites, params)  # noqa: E741
+    eigvals_banded = eig_banded(H[: u + 1], eigvals_only=True)
     H_matrix = matrix_hamiltonian(system, num_sites, params)
     eigvals_matrix = np.linalg.eigvalsh(H_matrix)
     np.testing.assert_allclose(eigvals_banded, eigvals_matrix)

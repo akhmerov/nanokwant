@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Union, Callable
+from typing import Callable
 
 HamiltonianType = dict[int, dict[str, np.ndarray]]
 
@@ -48,7 +48,11 @@ def _to_nonhermitian_format(system: HamiltonianType) -> HamiltonianType:
     }
 
 
-def _shrink_banded(ab: np.ndarray, l: int, u: int) -> tuple[np.ndarray, tuple[int, int]]:
+def _shrink_banded(
+    ab: np.ndarray,
+    l: int,  # noqa: E741
+    u: int,
+) -> tuple[np.ndarray, tuple[int, int]]:
     """Eliminate top and bottom zero rows from a banded matrix."""
     zero_rows = np.all(ab == 0, axis=1)
     # find the first and last non-zero rows
@@ -95,7 +99,6 @@ def hamiltonian(
     u_full = dim * u + (dim - 1)
 
     hamiltonian_shape = (l_full + u_full + 1, num_sites * dim)
-    print(f"{l=}, {u=}, {hamiltonian_shape=}")
     H = np.zeros(hamiltonian_shape, dtype=dtype)
 
     for hop_length, terms in system.items():
@@ -118,6 +121,7 @@ def hamiltonian(
             ] += term
 
     return _shrink_banded(H, l_full, u_full)
+
 
 def matrix_hamiltonian(
     system: HamiltonianType,
