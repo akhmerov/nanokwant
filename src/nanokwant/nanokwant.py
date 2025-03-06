@@ -4,11 +4,33 @@ from typing import Union, Callable
 HamiltonianType = dict[int, dict[str, np.ndarray]]
 
 
-def _hamiltonian_dtype(system: HamiltonianType, params: dict[str, complex | Callable]) -> np.dtype:
+def _hamiltonian_dtype(
+    system: HamiltonianType, params: dict[str, complex | Callable]
+) -> np.dtype:
     """Determine the common dtype of all term matrices and all parameter values."""
-    term_dtypes = [term_matrix.dtype for terms in system.values() for term_matrix in terms.values()]
-    param_dtypes = [np.asarray(value).dtype if not callable(value) else np.asarray(value(0)).dtype for value in params.values()]
+    term_dtypes = [
+        term_matrix.dtype for terms in system.values() for term_matrix in terms.values()
+    ]
+    param_dtypes = [
+        np.asarray(value).dtype if not callable(value) else np.asarray(value(0)).dtype
+        for value in params.values()
+    ]
     return np.result_type(*term_dtypes, *param_dtypes)
+
+
+def _to_banded(a: np.ndarray) -> np.ndarray:
+    """Convert a full 2D array to banded format.
+
+    The diagonal ordered format is defined as
+
+        ab[u + i - j, j] == a[i, j]
+    """
+    (m, n) = a.shape
+    m += n - 1
+    ab = np.zeros((m, n), dtype=a.dtype)
+    for i in range(n):
+        ab[n - 1 - i : m - i, i] = a[:, i]
+    return ab
 
 
 def hamiltonian(
@@ -17,7 +39,15 @@ def hamiltonian(
     params: Union[complex, Callable],
     hermitian: bool = True,
 ) -> np.ndarray:
-    """Generate the finite system Hamiltonian in band matrix format."""
+    """Generate the finite system Hamiltonian in band matrix format.
+
+    The diagonal ordered format defined as
+
+        ab[u + i - j, j] == a[i,j]
+
+    where a is the matrix. This format is compatible with ``scipy.linalg.solve_banded``
+    and ``scipy.linalg.eig_banded``.
+    """
     pass
 
 

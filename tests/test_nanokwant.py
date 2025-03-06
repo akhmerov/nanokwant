@@ -1,5 +1,5 @@
 import numpy as np
-from nanokwant.nanokwant import _hamiltonian_dtype, matrix_hamiltonian
+from nanokwant.nanokwant import _hamiltonian_dtype, matrix_hamiltonian, hamiltonian, _to_banded
 
 def test__hamiltonian_dtype():
     test_cases = [
@@ -65,3 +65,15 @@ def test_matrix_hamiltonian():
     ])
     H = matrix_hamiltonian(system, num_sites, params)
     np.testing.assert_equal(H, expected_H)
+
+
+def test_to_banded():
+    for a in (
+        np.random.rand(5, 3),
+        np.random.rand(3, 5),
+        np.random.rand(4, 4),
+    ):
+        ab = _to_banded(a)
+        for i in range(a.shape[0]):
+            for j in range(a.shape[1]):
+                assert ab[a.shape[1] - 1 - j + i, j] == a[i, j], (i, j)

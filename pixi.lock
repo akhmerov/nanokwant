@@ -929,7 +929,7 @@ packages:
 - pypi: .
   name: nanokwant
   version: 0.1.0
-  sha256: d77dada252e8e1f6378b24fce857586fc3c181f98c4651cd1c37c99bacffbcf4
+  sha256: 6a2e2263c317b0ee160d9399df1e98e020e201d7ab56bc7e4435d4420f8d7f51
   requires_python: '>=3.11'
   editable: true
 - conda: https://prefix.dev/conda-forge/linux-64/ncurses-6.5-h2d0b736_3.conda
