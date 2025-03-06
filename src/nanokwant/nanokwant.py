@@ -48,6 +48,15 @@ def _to_nonhermitian_format(system: HamiltonianType) -> HamiltonianType:
     }
 
 
+def _shrink_banded(ab: np.ndarray, l: int, u: int) -> tuple[np.ndarray, tuple[int, int]]:
+    """Eliminate top and bottom zero rows from a banded matrix."""
+    zero_rows = np.all(ab == 0, axis=1)
+    # find the first and last non-zero rows
+    first_nonzero = np.argmax(~zero_rows)
+    last_nonzero = len(zero_rows) - np.argmax(~zero_rows[::-1])
+    return ab[first_nonzero:last_nonzero], (l - last_nonzero, u - first_nonzero)
+
+
 def hamiltonian(
     system: HamiltonianType,
     num_sites: int,
@@ -108,7 +117,7 @@ def hamiltonian(
                 term_start * dim : term_end * dim,
             ] += term
 
-    return H, (l_full, u_full)
+    return _shrink_banded(H, l_full, u_full)
 
 def matrix_hamiltonian(
     system: HamiltonianType,
