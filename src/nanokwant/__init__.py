@@ -1,1 +1,3 @@
-from .nanokwant import matrix_hamiltonian
+from .nanokwant import hamiltonian, matrix_hamiltonian
+
+__all__ = ["hamiltonian", "matrix_hamiltonian"]
