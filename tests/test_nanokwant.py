@@ -1,5 +1,6 @@
 import numpy as np
 from nanokwant.nanokwant import _hamiltonian_dtype, matrix_hamiltonian, hamiltonian, _to_banded
+from scipy.linalg import eig_banded
 
 def test__hamiltonian_dtype():
     test_cases = [
@@ -77,3 +78,26 @@ def test_to_banded():
         for i in range(a.shape[0]):
             for j in range(a.shape[1]):
                 assert ab[a.shape[1] - 1 - j + i, j] == a[i, j], (i, j)
+
+
+def test_hamiltonian():
+    system = {
+        0: {
+            "mu": np.eye(2),
+            "Ez": np.array([[0, 1], [1, 0]]),
+        },
+        1: {
+            "t": np.eye(2),
+        }
+    }
+    num_sites = 3
+    params = {
+        "mu": 2.0,
+        "Ez": lambda x: np.sin(x),
+        "t": 1.0,
+    }
+    H, (l, u) = hamiltonian(system, num_sites, params)
+    eigvals_banded = eig_banded(H[:u + 1], eigvals_only=True)
+    H_matrix = matrix_hamiltonian(system, num_sites, params)
+    eigvals_matrix = np.linalg.eigvalsh(H_matrix)
+    np.testing.assert_allclose(eigvals_banded, eigvals_matrix)

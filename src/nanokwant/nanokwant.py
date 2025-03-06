@@ -33,10 +33,25 @@ def _to_banded(a: np.ndarray) -> np.ndarray:
     return ab
 
 
+def _to_nonhermitian_format(system: HamiltonianType) -> HamiltonianType:
+    """Remove negative hoppings and add conjugate transposes of positive hoppings."""
+    return {
+        hop_length: {term_name: term_matrix for term_name, term_matrix in terms.items()}
+        for hop_length, terms in system.items()
+        if hop_length >= 0
+    } | {
+        -hop_length: {
+            term_name: term_matrix.conj().T for term_name, term_matrix in terms.items()
+        }
+        for hop_length, terms in system.items()
+        if hop_length > 0
+    }
+
+
 def hamiltonian(
     system: HamiltonianType,
     num_sites: int,
-    params: Union[complex, Callable],
+    params: dict[str, complex | Callable],
     hermitian: bool = True,
 ) -> np.ndarray:
     """Generate the finite system Hamiltonian in band matrix format.
@@ -48,8 +63,52 @@ def hamiltonian(
     where a is the matrix. This format is compatible with ``scipy.linalg.solve_banded``
     and ``scipy.linalg.eig_banded``.
     """
-    pass
+    if hermitian:
+        if any(hop_length < 0 for hop_length in system):
+            raise ValueError("Hermitian Hamiltonian cannot have negative hoppings.")
+        system = _to_nonhermitian_format(system)
+    dim = next(iter(system[0].values())).shape[0]
+    dtype = _hamiltonian_dtype(system, params)
 
+    # Convert all the matrices in system to banded format
+    system = {
+        hop_length: {
+            term_name: _to_banded(term_matrix)
+            for term_name, term_matrix in terms.items()
+        }
+        for hop_length, terms in system.items()
+    }
+    # Bandwidth of the Hamiltonian
+    l, u = max(-k for k in system.keys()), max(system.keys())  # noqa: E741
+    # Band matrix bandwidths. Each block extends it by dim, except for the diagonal, which
+    # contributes dim - 1.
+    l_full = dim * l + (dim - 1)
+    u_full = dim * u + (dim - 1)
+
+    hamiltonian_shape = (l_full + u_full + 1, num_sites * dim)
+    print(f"{l=}, {u=}, {hamiltonian_shape=}")
+    H = np.zeros(hamiltonian_shape, dtype=dtype)
+
+    for hop_length, terms in system.items():
+        term_start, term_end = max(0, hop_length), num_sites + min(0, hop_length)
+        term_bottom = H.shape[0] - (l + hop_length) * dim
+        for term_name, term_matrix in terms.items():
+            value = params[term_name]
+            if callable(value):
+                value = value(np.arange(num_sites - abs(hop_length)))
+            else:
+                value = np.full(num_sites - abs(hop_length), value)
+            term = (
+                (value[..., None, None] * term_matrix[None, ...])
+                .transpose(1, 0, 2)
+                .reshape(term_matrix.shape[0], -1)
+            )
+            H[
+                term_bottom - term.shape[0] : term_bottom,
+                term_start * dim : term_end * dim,
+            ] += term
+
+    return H, (l_full, u_full)
 
 def matrix_hamiltonian(
     system: HamiltonianType,
@@ -61,6 +120,11 @@ def matrix_hamiltonian(
 
     Mainly used for testing purposes.
     """
+    if hermitian:
+        if any(hop_length < 0 for hop_length in system):
+            raise ValueError("Hermitian Hamiltonian cannot have negative hoppings.")
+        system = _to_nonhermitian_format(system)
+
     # Initialize the Hamiltonian matrix
     dim = next(iter(system[0].values())).shape[0]
     dtype = _hamiltonian_dtype(system, params)
@@ -78,11 +142,6 @@ def matrix_hamiltonian(
                 np.diag(value, k=hop_length)[..., None, None]
                 * term_matrix[None, None, ...]
             )
-            if hop_length and hermitian:
-                H += (
-                    np.diag(value, k=-hop_length)[..., None, None]
-                    * term_matrix.conj().T[None, None, ...]
-                )
 
     # Reshape the Hamiltonian matrix to 2D
     return H.transpose(0, 2, 1, 3).reshape(num_sites * dim, num_sites * dim)
