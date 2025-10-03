@@ -61,25 +61,13 @@ def _shrink_banded(
     return ab[first_nonzero:last_nonzero], (l - last_nonzero, u - first_nonzero)
 
 
-def _prepare_params(system: HamiltonianType,
-                     num_sites: int | None,
-                     params: dict[str, complex | Callable | np.ndarray],
-                     hermitian: bool) -> tuple[HamiltonianType, int, dict[tuple[int,str], np.ndarray]]:
-    """Return (possibly expanded) system, resolved num_sites, and arrays for each (hop_length, term_name).
-
-    All parameter specifications are converted to 1D numpy arrays of length num_sites - abs(hop_length).
-    """
-    if hermitian:
-        if any(hop_length < 0 for hop_length in system):
-            raise ValueError("Hermitian Hamiltonian cannot have negative hoppings.")
-        system = _to_nonhermitian_format(system)
-
-    # Infer num_sites
+def _prepare_param_arrays(system: HamiltonianType, num_sites: int | None, params: dict[str, complex | Callable | np.ndarray]) -> tuple[int, dict[tuple[int,str], np.ndarray]]:
+    """Infer/validate num_sites and convert params to arrays keyed by (hop_length, term_name).
+    Only non-negative hoppings are considered for inference/validation; hermitian expansion is separate."""
     if num_sites is None:
         candidates: set[int] = set()
         for hop_length, terms in system.items():
-            if hop_length < 0:
-                continue
+            if hop_length < 0: continue
             for term_name in terms:
                 value = params[term_name]
                 if callable(value):
@@ -93,24 +81,17 @@ def _prepare_params(system: HamiltonianType,
         if len(candidates) != 1:
             raise ValueError(f"Inconsistent array parameter lengths; inferred candidates {candidates} for num_sites.")
         num_sites = candidates.pop()
-
     # Validate arrays
     for hop_length, terms in system.items():
-        if hop_length < 0:
-            continue
+        if hop_length < 0: continue
         for term_name in terms:
             value = params[term_name]
-            if callable(value):
-                continue
+            if callable(value): continue
             arr = np.asarray(value)
-            if arr.ndim == 0:
-                continue
+            if arr.ndim == 0: continue
             expected = num_sites - (hop_length if hop_length > 0 else 0)
             if arr.shape[0] != expected:
-                raise ValueError(
-                    f"Parameter '{term_name}' for hopping length {hop_length} has length {arr.shape[0]}, expected {expected} for num_sites={num_sites}."
-                )
-
+                raise ValueError(f"Parameter '{term_name}' for hopping length {hop_length} has length {arr.shape[0]}, expected {expected} for num_sites={num_sites}.")
     # Materialize arrays
     param_arrays: dict[tuple[int,str], np.ndarray] = {}
     for hop_length, terms in system.items():
@@ -127,9 +108,30 @@ def _prepare_params(system: HamiltonianType,
                 else:
                     arr = raw
             param_arrays[(hop_length, term_name)] = arr
-    return system, num_sites, param_arrays
+    return num_sites, param_arrays
 
-
+def _ensure_nonhermitian(system: HamiltonianType, param_arrays: dict[tuple[int,str], np.ndarray]) -> tuple[HamiltonianType, dict[tuple[int,str], np.ndarray]]:
+    """Return a non-Hermitian-expanded system and matching parameter arrays.
+    Adds negative hoppings by conjugating matrices and parameter arrays.
+    Real-valued parameter arrays are reused (not copied needlessly)."""
+    new_system: HamiltonianType = {k: {n: m for n,m in terms.items()} for k,terms in system.items() if k >= 0}
+    new_params = {(k, n): arr for (k,n),arr in param_arrays.items() if k >= 0}
+    for hop_length, terms in list(system.items()):
+        if hop_length > 0:
+            neg = -hop_length
+            if neg in new_system:  # skip if user provided explicitly (non-hermitian use-case)
+                continue
+            new_terms = {}
+            for term_name, term_matrix in terms.items():
+                new_terms[term_name] = term_matrix.conj().T
+                arr = param_arrays[(hop_length, term_name)]
+                if np.iscomplexobj(arr):
+                    arr_neg = arr.conj()
+                else:
+                    arr_neg = arr  # reuse real array
+                new_params[(neg, term_name)] = arr_neg
+            new_system[neg] = new_terms
+    return new_system, new_params
 def hamiltonian(
     system: HamiltonianType,
     num_sites: int | None,
@@ -148,8 +150,10 @@ def hamiltonian(
     if hermitian:
         if any(hop_length < 0 for hop_length in system):
             raise ValueError("Hermitian Hamiltonian cannot have negative hoppings.")
-    # Prepare parameters (also expands hermitian system inside helper if needed)
-    system, num_sites, param_arrays = _prepare_params(system, num_sites, params, hermitian)
+    # Prepare parameter arrays (no hermitian expansion here)
+    num_sites, param_arrays = _prepare_param_arrays(system, num_sites, params)
+    if hermitian:
+        system, param_arrays = _ensure_nonhermitian(system, param_arrays)
     dim = next(iter(system[0].values())).shape[0]
     dtype = _hamiltonian_dtype(system, params)
     # Convert matrices to banded once
@@ -178,8 +182,12 @@ def matrix_hamiltonian(
 
     Mainly used for testing purposes.
     """
-    # Prepare parameters (handles hermitian processing too)
-    system, num_sites, param_arrays = _prepare_params(system, num_sites, params, hermitian)
+    if hermitian:
+        if any(hop_length < 0 for hop_length in system):
+            raise ValueError("Hermitian Hamiltonian cannot have negative hoppings.")
+    num_sites, param_arrays = _prepare_param_arrays(system, num_sites, params)
+    if hermitian:
+        system, param_arrays = _ensure_nonhermitian(system, param_arrays)
     dim = next(iter(system[0].values())).shape[0]
     dtype = _hamiltonian_dtype(system, params)
     H = np.zeros((num_sites, num_sites, dim, dim), dtype=dtype)
