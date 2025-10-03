@@ -48,26 +48,18 @@ def _to_nonhermitian_format(system: HamiltonianType) -> HamiltonianType:
     }
 
 
-def _shrink_banded(
-    ab: np.ndarray,
-    l: int,  # noqa: E741
-    u: int,
-) -> tuple[np.ndarray, tuple[int, int]]:
-    """Eliminate top and bottom zero rows from a banded matrix."""
-    zero_rows = np.all(ab == 0, axis=1)
-    # find the first and last non-zero rows
-    first_nonzero = np.argmax(~zero_rows)
-    last_nonzero = len(zero_rows) - np.argmax(~zero_rows[::-1])
-    return ab[first_nonzero:last_nonzero], (l - last_nonzero, u - first_nonzero)
-
-
-def _prepare_param_arrays(system: HamiltonianType, num_sites: int | None, params: dict[str, complex | Callable | np.ndarray]) -> tuple[int, dict[tuple[int,str], np.ndarray]]:
+def _prepare_param_arrays(
+    system: HamiltonianType,
+    num_sites: int | None,
+    params: dict[str, complex | Callable | np.ndarray],
+) -> tuple[int, dict[tuple[int, str], np.ndarray]]:
     """Infer/validate num_sites and convert params to arrays keyed by (hop_length, term_name).
     Only non-negative hoppings are considered for inference/validation; hermitian expansion is separate."""
     if num_sites is None:
         candidates: set[int] = set()
         for hop_length, terms in system.items():
-            if hop_length < 0: continue
+            if hop_length < 0:
+                continue
             for term_name in terms:
                 value = params[term_name]
                 if callable(value):
@@ -77,23 +69,32 @@ def _prepare_param_arrays(system: HamiltonianType, num_sites: int | None, params
                     continue
                 candidates.add(arr.shape[0] + (hop_length if hop_length > 0 else 0))
         if not candidates:
-            raise ValueError("num_sites could not be inferred: provide num_sites or array parameters.")
+            raise ValueError(
+                "num_sites could not be inferred: provide num_sites or array parameters."
+            )
         if len(candidates) != 1:
-            raise ValueError(f"Inconsistent array parameter lengths; inferred candidates {candidates} for num_sites.")
+            raise ValueError(
+                f"Inconsistent array parameter lengths; inferred candidates {candidates} for num_sites."
+            )
         num_sites = candidates.pop()
     # Validate arrays
     for hop_length, terms in system.items():
-        if hop_length < 0: continue
+        if hop_length < 0:
+            continue
         for term_name in terms:
             value = params[term_name]
-            if callable(value): continue
+            if callable(value):
+                continue
             arr = np.asarray(value)
-            if arr.ndim == 0: continue
+            if arr.ndim == 0:
+                continue
             expected = num_sites - (hop_length if hop_length > 0 else 0)
             if arr.shape[0] != expected:
-                raise ValueError(f"Parameter '{term_name}' for hopping length {hop_length} has length {arr.shape[0]}, expected {expected} for num_sites={num_sites}.")
+                raise ValueError(
+                    f"Parameter '{term_name}' for hopping length {hop_length} has length {arr.shape[0]}, expected {expected} for num_sites={num_sites}."
+                )
     # Materialize arrays
-    param_arrays: dict[tuple[int,str], np.ndarray] = {}
+    param_arrays: dict[tuple[int, str], np.ndarray] = {}
     for hop_length, terms in system.items():
         length = num_sites - abs(hop_length)
         xs = np.arange(length)
@@ -110,16 +111,23 @@ def _prepare_param_arrays(system: HamiltonianType, num_sites: int | None, params
             param_arrays[(hop_length, term_name)] = arr
     return num_sites, param_arrays
 
-def _ensure_nonhermitian(system: HamiltonianType, param_arrays: dict[tuple[int,str], np.ndarray]) -> tuple[HamiltonianType, dict[tuple[int,str], np.ndarray]]:
+
+def _ensure_nonhermitian(
+    system: HamiltonianType, param_arrays: dict[tuple[int, str], np.ndarray]
+) -> tuple[HamiltonianType, dict[tuple[int, str], np.ndarray]]:
     """Return a non-Hermitian-expanded system and matching parameter arrays.
     Adds negative hoppings by conjugating matrices and parameter arrays.
     Real-valued parameter arrays are reused (not copied needlessly)."""
-    new_system: HamiltonianType = {k: {n: m for n,m in terms.items()} for k,terms in system.items() if k >= 0}
-    new_params = {(k, n): arr for (k,n),arr in param_arrays.items() if k >= 0}
+    new_system: HamiltonianType = {
+        k: {n: m for n, m in terms.items()} for k, terms in system.items() if k >= 0
+    }
+    new_params = {(k, n): arr for (k, n), arr in param_arrays.items() if k >= 0}
     for hop_length, terms in list(system.items()):
         if hop_length > 0:
             neg = -hop_length
-            if neg in new_system:  # skip if user provided explicitly (non-hermitian use-case)
+            if (
+                neg in new_system
+            ):  # skip if user provided explicitly (non-hermitian use-case)
                 continue
             new_terms = {}
             for term_name, term_matrix in terms.items():
@@ -132,11 +140,127 @@ def _ensure_nonhermitian(system: HamiltonianType, param_arrays: dict[tuple[int,s
                 new_params[(neg, term_name)] = arr_neg
             new_system[neg] = new_terms
     return new_system, new_params
+
+
+def _assemble_banded_matrix(
+    system: HamiltonianType,
+    num_sites: int,
+    param_arrays: dict[tuple[int, str], np.ndarray],
+    dim: int,
+    dtype: np.dtype,
+) -> tuple[np.ndarray, tuple[int, int]]:
+    """Assemble the banded matrix for the provided system definition."""
+    if not system:
+        raise ValueError("system must contain at least one hopping term")
+
+    base_bandwidth = dim - 1
+    trimmed_system: dict[int, dict[str, tuple[np.ndarray, int, int]]] = {}
+    min_delta = 0
+    max_delta = 0
+
+    for hop, terms in system.items():
+        trimmed_terms: dict[str, tuple[np.ndarray, int, int]] = {}
+        for name, matrix in terms.items():
+            # Convert the small (dim x dim) term matrix to a full banded block
+            # in the diagonal-ordered format used by scipy (ab[u + i - j, j] == a[i,j]).
+            banded_full = _to_banded(matrix)
+
+            # Determine which rows of the per-term band are actually non-zero.
+            # Many physical term matrices are sparse in this representation; by
+            # trimming zero-only rows now we can reduce the global band height.
+            row_mask = np.any(banded_full != 0, axis=1)
+            if not row_mask.any():
+                # This term contributes nothing (zero matrix); skip it.
+                continue
+
+            # Find the first and last non-empty rows for this term's banded block
+            # and slice the per-term band accordingly. `first` is the top row index
+            # kept (0-based relative to banded_full) and `last` is the bottom.
+            first = int(np.argmax(row_mask))
+            last = int(len(row_mask) - 1 - np.argmax(row_mask[::-1]))
+            banded_trim = banded_full[first : last + 1]
+
+            # How many rows were trimmed from the top/bottom of the per-term band
+            top_trim = first
+            bottom_trim = len(row_mask) - 1 - last
+
+            # Compute this term's effective upper/lower offset (measured in rows)
+            # relative to the central diagonal row index (base_bandwidth).
+            # These will be used to compute the global band extents below.
+            u_term = base_bandwidth - top_trim
+            l_term = base_bandwidth - bottom_trim
+
+            # Save the trimmed per-term band and its per-term l/u so assembly can
+            # place it into the global band without storing many zero rows.
+            trimmed_terms[name] = (banded_trim, l_term, u_term)
+
+            # Track global min/max deltas (in row-offset units) contributed by
+            # this hopping length. hop*dim shifts the block vertically; we
+            # subtract/add the term l/u to get absolute offsets.
+            min_delta = min(min_delta, hop * dim - l_term)
+            max_delta = max(max_delta, hop * dim + u_term)
+        if trimmed_terms:
+            trimmed_system[hop] = trimmed_terms
+
+    if not trimmed_system:
+        H = np.zeros((1, num_sites * dim), dtype=dtype)
+        return H, (0, 0)
+
+    # Ensure the global deltas at least include the central diagonal (0).
+    # l_full and u_full are expressed in row-offset units from the central
+    # diagonal row. For example, l_full is how many rows below the center we
+    # need (lower bandwidth), u_full is how many rows above the center (upper).
+    min_delta = min(min_delta, 0)
+    max_delta = max(max_delta, 0)
+    l_full = -min_delta
+    u_full = max_delta
+
+    H = np.zeros((l_full + u_full + 1, num_sites * dim), dtype=dtype)
+
+    # Write each trimmed per-term band into the global band array H.
+    # Loop over hopping lengths and the per-term trimmed blocks created above.
+    for hop_length, terms in trimmed_system.items():
+        # Columns affected by a hopping of length `hop_length` span sites
+        # [term_start, term_end) in site-space; convert to flattened indices
+        # by multiplying by `dim` later when slicing `H`.
+        term_start = max(0, hop_length)
+        term_end = num_sites + min(0, hop_length)
+
+        for term_name, (banded_trim, l_term, u_term) in terms.items():
+            # Parameter values for each site for this hopping+term. Shape (N-hop_length,)
+            values = param_arrays[(hop_length, term_name)]
+
+            # Compute the top row in the global H where this per-term trimmed
+            # band should begin. `u_full` is the absolute row index of the
+            # topmost global band row; subtracting the (hop shift + per-term
+            # upper offset) aligns the per-term upper row correctly.
+            row_start = u_full - (hop_length * dim + u_term)
+
+            # Expand the per-term trimmed band into a shaped block that matches
+            # (rows, cols_in_flattened_space). We multiply `values` into the
+            # band rows first, then transpose/reshape so rows correspond to
+            # diagonals and columns to flattened site*dim indices.
+            term = (
+                (values[..., None, None] * banded_trim[None, ...])
+                .transpose(1, 0, 2)
+                .reshape(banded_trim.shape[0], -1)
+            )
+
+            # Add the small block into H at the computed row/column slice.
+            H[
+                row_start : row_start + banded_trim.shape[0],
+                term_start * dim : term_end * dim,
+            ] += term
+
+    return H, (l_full, u_full)
+
+
 def hamiltonian(
     system: HamiltonianType,
     num_sites: int | None,
     params: dict[str, complex | Callable | np.ndarray],
     hermitian: bool = True,
+    format: str = "general",
 ) -> np.ndarray:
     """Generate the finite system Hamiltonian in band matrix format.
 
@@ -144,32 +268,73 @@ def hamiltonian(
 
         ab[u + i - j, j] == a[i,j]
 
-    where a is the matrix. This format is compatible with ``scipy.linalg.solve_banded``
-    and ``scipy.linalg.eig_banded``.
+    where a is the matrix.
+
+    Parameters
+    ----------
+    system : HamiltonianType
+        Dictionary mapping hopping lengths to term dictionaries.
+    num_sites : int | None
+        Number of sites. Can be None if array parameters are provided.
+    params : dict
+        Parameter values (constants, callables, or arrays).
+    hermitian : bool, optional
+        If True, expand system to include negative hoppings. Default is True.
+    format : str, optional
+        Output format: "general" (default) for scipy.linalg.solve_banded,
+        or "eig_banded" for scipy.linalg.eig_banded (only upper bands, hermitian only).
+
+    Returns
+    -------
+    tuple[np.ndarray, tuple[int, int]]
+        Banded matrix and (l, u) bandwidths. For "eig_banded" format, l is always 0
+        and only the upper triangle is stored.
     """
+    if format not in ("general", "eig_banded"):
+        raise ValueError(f"format must be 'general' or 'eig_banded', got {format!r}")
+    if format == "eig_banded" and not hermitian:
+        raise ValueError("eig_banded format requires hermitian=True")
     if hermitian:
         if any(hop_length < 0 for hop_length in system):
             raise ValueError("Hermitian Hamiltonian cannot have negative hoppings.")
     # Prepare parameter arrays (no hermitian expansion here)
     num_sites, param_arrays = _prepare_param_arrays(system, num_sites, params)
+    # Determine the block dimension `dim` from any term matrix available in
+    # the provided system. Previously we assumed `system[0]` existed which
+    # breaks for systems that have no onsite terms (hop=0). Use the first
+    # available term mapping instead.
+    try:
+        first_terms = next(iter(system.values()))
+    except StopIteration:
+        raise ValueError("system must contain at least one hopping term")
+    dim = next(iter(first_terms.values())).shape[0]
+    dtype = _hamiltonian_dtype(system, params)
+
+    if format == "eig_banded":
+        # For eig_banded we only need non-negative hoppings and only the
+        # upper-triangular part of onsite (hop==0) term matrices. Applying
+        # `np.triu` here avoids leaving lower-triangle content that would
+        # otherwise be removed by slicing the assembled band later.
+        # Build upper-only system: keep non-negative hops, triangularize onsite
+        # matrices with `np.triu` and keep other hops unchanged.
+        upper_system = {
+            hop: {name: (mat if hop else np.triu(mat)) for name, mat in terms.items()}
+            for hop, terms in system.items()
+            if hop >= 0
+        }
+
+        upper_params = {
+            key: values for key, values in param_arrays.items() if key[0] >= 0
+        }
+
+        ab_shrunk, (_, u_shrunk) = _assemble_banded_matrix(
+            upper_system, num_sites, upper_params, dim, dtype
+        )
+        return ab_shrunk, (0, u_shrunk)
+
     if hermitian:
         system, param_arrays = _ensure_nonhermitian(system, param_arrays)
-    dim = next(iter(system[0].values())).shape[0]
-    dtype = _hamiltonian_dtype(system, params)
-    # Convert matrices to banded once
-    banded_system = {h: {n: _to_banded(m) for n,m in terms.items()} for h,terms in system.items()}
-    l, u = max(-k for k in banded_system.keys()), max(banded_system.keys())  # noqa: E741
-    l_full = dim * l + (dim - 1)
-    u_full = dim * u + (dim - 1)
-    H = np.zeros((l_full + u_full + 1, num_sites * dim), dtype=dtype)
-    for hop_length, terms in banded_system.items():
-        term_start, term_end = max(0, hop_length), num_sites + min(0, hop_length)
-        term_bottom = H.shape[0] - (l + hop_length) * dim
-        for term_name, term_matrix in terms.items():
-            value = param_arrays[(hop_length, term_name)]
-            term = (value[..., None, None] * term_matrix[None, ...]).transpose(1,0,2).reshape(term_matrix.shape[0], -1)
-            H[term_bottom - term.shape[0]:term_bottom, term_start * dim: term_end * dim] += term
-    return _shrink_banded(H, l_full, u_full)
+    return _assemble_banded_matrix(system, num_sites, param_arrays, dim, dtype)
 
 
 def matrix_hamiltonian(
@@ -188,11 +353,18 @@ def matrix_hamiltonian(
     num_sites, param_arrays = _prepare_param_arrays(system, num_sites, params)
     if hermitian:
         system, param_arrays = _ensure_nonhermitian(system, param_arrays)
-    dim = next(iter(system[0].values())).shape[0]
+    try:
+        first_terms = next(iter(system.values()))
+    except StopIteration:
+        raise ValueError("system must contain at least one hopping term")
+    dim = next(iter(first_terms.values())).shape[0]
     dtype = _hamiltonian_dtype(system, params)
     H = np.zeros((num_sites, num_sites, dim, dim), dtype=dtype)
     for hop_length, terms in system.items():
         for term_name, term_matrix in terms.items():
             value = param_arrays[(hop_length, term_name)]
-            H += (np.diag(value, k=hop_length)[..., None, None] * term_matrix[None, None, ...])
-    return H.transpose(0,2,1,3).reshape(num_sites * dim, num_sites * dim)
+            H += (
+                np.diag(value, k=hop_length)[..., None, None]
+                * term_matrix[None, None, ...]
+            )
+    return H.transpose(0, 2, 1, 3).reshape(num_sites * dim, num_sites * dim)

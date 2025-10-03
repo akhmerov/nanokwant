@@ -147,3 +147,79 @@ def test_array_parameter_inconsistency():
         assert "length" in str(e)
     else:
         raise AssertionError("Expected ValueError for inconsistent parameter lengths")
+
+
+def test_hamiltonian_eig_banded_format():
+    """Test that eig_banded format produces correct results."""
+    system = {
+        0: {
+            "mu": np.eye(2),
+            "Ez": np.array([[0, 1], [1, 0]]),
+        },
+        1: {
+            "t": np.eye(2),
+        },
+    }
+    num_sites = 5
+    params = {
+        "mu": 2.0,
+        "Ez": lambda x: np.sin(x),
+        "t": 1.0,
+    }
+
+    # General format (for solve_banded)
+    H_general, (l, u) = hamiltonian(system, num_sites, params, format="general")  # noqa: E741
+
+    # eig_banded format (optimized, only upper bands)
+    H_eig, (l_eig, u_eig) = hamiltonian(system, num_sites, params, format="eig_banded")  # noqa: E741
+    assert l_eig == 0, "eig_banded format should have l=0"
+
+    # The eig_banded result must equal the top (u+1) rows of the general band
+    # (i.e. it should be a slice of the full banded matrix).
+    np.testing.assert_equal(H_eig, H_general[: u + 1])
+
+    # Eigenvalues: compare optimized band eigenvalues to dense matrix eigenvalues
+    eigvals_eig = eig_banded(H_eig, eigvals_only=True, lower=False)
+    H_matrix = matrix_hamiltonian(system, num_sites, params)
+    eigvals_matrix = np.linalg.eigvalsh(H_matrix)
+    np.testing.assert_allclose(np.sort(eigvals_eig), np.sort(eigvals_matrix))
+
+
+def test_trimming_eig_banded():
+    """Test that the lower diagonal part of the onsite terms is trimmed."""
+    system = {
+        0: {"a": np.ones((2, 2))},
+    }
+    num_sites = 3
+    params = {"a": 1.0}
+    H_band, (l, u) = hamiltonian(
+        system, num_sites, params, hermitian=True, format="eig_banded"
+    )
+    assert (l, u) == (0, 1)
+    assert H_band.shape[0] == 2
+
+
+def test_shrink_no_diagonal():
+    """If there are no hop=0 (onsite) terms, the returned band should be
+    correctly shrunk: bandwidths non-negative and no all-zero outer rows.
+
+    This guards against regressions where outer rows remain zero or l/u
+    become negative after trimming.
+    """
+    # System with only nearest-neighbor hopping (no onsite terms)
+    system = {
+        1: {"t": np.array([[0.0, 1.0], [1.0, 0.0]])},
+    }
+    num_sites = 4
+    params = {"t": 1.0}
+
+    H_band, (l, u) = hamiltonian(
+        system, num_sites, params, hermitian=False, format="general"
+    )
+
+    # Bandwidths must be non-negative integers
+    assert isinstance(l, (int, np.integer)) and isinstance(u, (int, np.integer))
+    assert l >= 0 and u >= 0
+
+    # The returned band should not have all-zero top rows (longest range hopping)
+    assert np.any(H_band[0])
