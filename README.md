@@ -24,10 +24,16 @@ system = {
 Once you've defined your system, generate your Hamiltonian in a banded format using
 
 ```python
-hamiltonian = nanokwant.hamiltonian(system, num_sites, **params)
+hamiltonian = nanokwant.hamiltonian(system, num_sites, params)
 ```
 
-where `num_sites` is the number of sites in your system and `params` contains all parameters specified either as constant values or as functions of the site index.
+If all parameters are constants or callables, you must specify `num_sites`.
+
+Parameters may also be numpy arrays. In that case `num_sites` becomes optional and will be
+inferred from the array lengths under the consistency rules:
+- For hopping length 0 (onsite), parameter arrays must have length N = num_sites
+- For hopping length k>0, parameter arrays must have length N - k
+All array-typed parameters must be mutually consistent; otherwise a ValueError is raised.
 
 ## Developing
 

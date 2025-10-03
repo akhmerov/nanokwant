@@ -118,3 +118,33 @@ def test_hamiltonian():
     H_matrix = matrix_hamiltonian(system, num_sites, params)
     eigvals_matrix = np.linalg.eigvalsh(H_matrix)
     np.testing.assert_allclose(eigvals_banded, eigvals_matrix)
+
+
+def test_array_parameters_infer_num_sites():
+    system = {
+        0: {"mu": np.eye(1)},
+        1: {"t": np.eye(1)},
+    }
+    # For N sites, onsite array length N, hopping length N-1
+    mu = np.array([1.0, 2.0, 3.0])  # length 3 -> num_sites should be 3
+    t = np.array([0.5, 0.6])  # length 2 -> N-1 consistent
+    params = {"mu": mu, "t": t}
+    H_banded, (l,u) = hamiltonian(system, None, params)
+    H_matrix = matrix_hamiltonian(system, None, params)
+    eigvals_banded = eig_banded(H_banded[:u+1], eigvals_only=True)  # noqa: E741
+    eigvals_matrix = np.linalg.eigvalsh(H_matrix)
+    np.testing.assert_allclose(np.sort(eigvals_banded), np.sort(eigvals_matrix))
+
+
+def test_array_parameter_inconsistency():
+    system = {0: {"mu": np.eye(1)}, 1: {"t": np.eye(1)}}
+    mu = np.array([1.0, 2.0, 3.0])
+    t = np.array([0.5, 0.6, 0.7])  # should be length 2 for 3 sites
+    params = {"mu": mu, "t": t}
+    try:
+        hamiltonian(system, None, params)
+    except ValueError as e:
+        assert "length" in str(e)
+    else:
+        raise AssertionError("Expected ValueError for inconsistent parameter lengths")
+

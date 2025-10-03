@@ -63,8 +63,8 @@ def _shrink_banded(
 
 def hamiltonian(
     system: HamiltonianType,
-    num_sites: int,
-    params: dict[str, complex | Callable],
+    num_sites: int | None,
+    params: dict[str, complex | Callable | np.ndarray],
     hermitian: bool = True,
 ) -> np.ndarray:
     """Generate the finite system Hamiltonian in band matrix format.
@@ -82,6 +82,41 @@ def hamiltonian(
         system = _to_nonhermitian_format(system)
     dim = next(iter(system[0].values())).shape[0]
     dtype = _hamiltonian_dtype(system, params)
+
+    # Infer num_sites from array parameters if needed and/or validate consistency
+    if num_sites is None:
+        candidates = set()
+        for hop_length, terms in system.items():
+            if hop_length < 0:  # skip auto-generated negative hoppings
+                continue
+            for term_name in terms:
+                value = params[term_name]
+                if callable(value):
+                    continue
+                arr = np.asarray(value)
+                if arr.ndim == 0:
+                    continue
+                candidates.add(arr.shape[0] + (hop_length if hop_length > 0 else 0))
+        if not candidates:
+            raise ValueError("num_sites could not be inferred: provide num_sites or array parameters.")
+        if len(candidates) != 1:
+            raise ValueError(f"Inconsistent array parameter lengths; inferred candidates {candidates} for num_sites.")
+        num_sites = candidates.pop()
+    # Validate provided num_sites against any array parameters
+    for hop_length, terms in system.items():
+        if hop_length < 0: continue
+        for term_name in terms:
+            value = params[term_name]
+            if callable(value):
+                continue
+            arr = np.asarray(value)
+            if arr.ndim == 0:
+                continue
+            expected = num_sites - (hop_length if hop_length > 0 else 0)
+            if arr.shape[0] != expected:
+                raise ValueError(
+                    f"Parameter '{term_name}' for hopping length {hop_length} has length {arr.shape[0]}, expected {expected} for num_sites={num_sites}."
+                )
 
     # Convert all the matrices in system to banded format
     system = {
@@ -109,7 +144,11 @@ def hamiltonian(
             if callable(value):
                 value = value(np.arange(num_sites - abs(hop_length)))
             else:
-                value = np.full(num_sites - abs(hop_length), value)
+                arr = np.asarray(value)
+                if arr.ndim == 0:
+                    value = np.full(num_sites - abs(hop_length), arr)
+                else:
+                    value = arr
             term = (
                 (value[..., None, None] * term_matrix[None, ...])
                 .transpose(1, 0, 2)
@@ -125,8 +164,8 @@ def hamiltonian(
 
 def matrix_hamiltonian(
     system: HamiltonianType,
-    num_sites: int,
-    params: dict[str, complex | Callable],
+    num_sites: int | None,
+    params: dict[str, complex | Callable | np.ndarray],
     hermitian: bool = True,
 ) -> np.ndarray:
     """Construct the matrix representation of the Hamiltonian.
@@ -141,6 +180,42 @@ def matrix_hamiltonian(
     # Initialize the Hamiltonian matrix
     dim = next(iter(system[0].values())).shape[0]
     dtype = _hamiltonian_dtype(system, params)
+
+    # Infer num_sites from array parameters if needed and/or validate consistency
+    if num_sites is None:
+        candidates = set()
+        for hop_length, terms in system.items():
+            if hop_length < 0:  # skip auto-generated negative hoppings
+                continue
+            for term_name in terms:
+                value = params[term_name]
+                if callable(value):
+                    continue
+                arr = np.asarray(value)
+                if arr.ndim == 0:
+                    continue
+                candidates.add(arr.shape[0] + (hop_length if hop_length > 0 else 0))
+        if not candidates:
+            raise ValueError("num_sites could not be inferred: provide num_sites or array parameters.")
+        if len(candidates) != 1:
+            raise ValueError(f"Inconsistent array parameter lengths; inferred candidates {candidates} for num_sites.")
+        num_sites = candidates.pop()
+    # Validate provided num_sites against any array parameters
+    for hop_length, terms in system.items():
+        if hop_length < 0: continue
+        for term_name in terms:
+            value = params[term_name]
+            if callable(value):
+                continue
+            arr = np.asarray(value)
+            if arr.ndim == 0:
+                continue
+            expected = num_sites - (hop_length if hop_length > 0 else 0)
+            if arr.shape[0] != expected:
+                raise ValueError(
+                    f"Parameter '{term_name}' for hopping length {hop_length} has length {arr.shape[0]}, expected {expected} for num_sites={num_sites}."
+                )
+
     H = np.zeros((num_sites, num_sites, dim, dim), dtype=dtype)
 
     # Fill the Hamiltonian matrix
@@ -150,7 +225,11 @@ def matrix_hamiltonian(
             if callable(value):
                 value = value(np.arange(num_sites - abs(hop_length)))
             else:
-                value = np.full(num_sites - abs(hop_length), value)
+                arr = np.asarray(value)
+                if arr.ndim == 0:
+                    value = np.full(num_sites - abs(hop_length), arr)
+                else:
+                    value = arr
             H += (
                 np.diag(value, k=hop_length)[..., None, None]
                 * term_matrix[None, None, ...]
