@@ -88,8 +88,11 @@ The library generates Hamiltonians in two formats:
 
 - This project uses `pixi` for package management
 - Run tests with: `pixi run pytest`
-- Use pre-commit hooks: configured in `.pre-commit-config.yaml`
-- Linting with ruff: `pixi run ruff`
+- **Always run pre-commit before committing**: `pixi run pre-commit run --all-files`
+- Pre-commit hooks handle linting (ruff) and formatting (ruff-format) automatically
+- To install pre-commit hooks: `pixi run pre-commit install`
+- Manual linting: `pixi run ruff check`
+- Manual formatting: `pixi run ruff format`
 
 ## Common Patterns
 

@@ -129,9 +129,9 @@ def test_array_parameters_infer_num_sites():
     mu = np.array([1.0, 2.0, 3.0])  # length 3 -> num_sites should be 3
     t = np.array([0.5, 0.6])  # length 2 -> N-1 consistent
     params = {"mu": mu, "t": t}
-    H_banded, (l,u) = hamiltonian(system, None, params)
+    H_banded, (l, u) = hamiltonian(system, None, params)  # noqa: E741
     H_matrix = matrix_hamiltonian(system, None, params)
-    eigvals_banded = eig_banded(H_banded[:u+1], eigvals_only=True)  # noqa: E741
+    eigvals_banded = eig_banded(H_banded[: u + 1], eigvals_only=True)
     eigvals_matrix = np.linalg.eigvalsh(H_matrix)
     np.testing.assert_allclose(np.sort(eigvals_banded), np.sort(eigvals_matrix))
 
@@ -147,4 +147,3 @@ def test_array_parameter_inconsistency():
         assert "length" in str(e)
     else:
         raise AssertionError("Expected ValueError for inconsistent parameter lengths")
-
