@@ -5,16 +5,13 @@ attached, using Kwant's modes() function for lead mode computation.
 """
 
 import numpy as np
-import scipy.sparse as sp
 from typing import Literal
 from kwant.physics import leads as kwant_leads
 from .nanokwant import (
     HamiltonianType,
-    hamiltonian,
     matrix_hamiltonian,
     _hamiltonian_dtype,
     _prepare_param_arrays,
-    _to_banded,
 )
 
 

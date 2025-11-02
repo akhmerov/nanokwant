@@ -3,7 +3,6 @@
 import numpy as np
 import pytest
 import kwant
-from scipy.linalg import solve_banded
 from nanokwant.scattering import scattering_system, _dense_to_banded
 
 
@@ -206,7 +205,6 @@ def test_smatrix_computation():
     
     # Extract S-matrix elements from the solutions
     # S[i,j] is the amplitude in lead i from incoming mode in lead j
-    n_leads = len(indices_list)
     
     # Count total modes
     total_modes = sum(rhs.shape[1] for rhs in rhs_list if rhs is not None)
