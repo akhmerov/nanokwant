@@ -179,6 +179,80 @@ def test_scattering_system_single_lead():
     assert len(idx_right) == 1
 
 
+def test_smatrix_computation():
+    """Test that we can compute S-matrix from the scattering system."""
+    system = {
+        0: {"mu": np.eye(2)},
+        1: {"t": np.eye(2)},  # positive hopping
+    }
+    num_sites = 10
+    params = {"mu": 0.5, "t": 1.0}
+    energy = 0.5
+    
+    # Get nanokwant scattering system
+    lhs, (l, u), rhs_list, indices_list = scattering_system(
+        system, num_sites, params, energy, leads="both"
+    )
+    
+    # Solve the linear system for each incoming lead
+    # The solution gives the outgoing amplitudes
+    solutions = []
+    for rhs in rhs_list:
+        if rhs is not None:
+            # Solve using banded solver
+            from scipy.linalg import solve_banded
+            sol = solve_banded((l, u), lhs, rhs)
+            solutions.append(sol)
+    
+    # Extract S-matrix elements from the solutions
+    # S[i,j] is the amplitude in lead i from incoming mode in lead j
+    n_leads = len(indices_list)
+    
+    # Count total modes
+    total_modes = sum(rhs.shape[1] for rhs in rhs_list if rhs is not None)
+    
+    S = np.zeros((total_modes, total_modes), dtype=complex)
+    
+    # Fill in the S-matrix
+    col_offset = 0
+    for j, (rhs, sol) in enumerate(zip(rhs_list, solutions)):
+        n_in = rhs.shape[1]
+        row_offset = 0
+        for i, indices in enumerate(indices_list):
+            n_out = len(indices)
+            # Extract the outgoing amplitudes for this lead
+            S[row_offset:row_offset + n_out, col_offset:col_offset + n_in] = sol[indices, :]
+            row_offset += n_out
+        col_offset += n_in
+    
+    # Compare with Kwant
+    lat = kwant.lattice.chain(norbs=2)
+    syst = kwant.Builder()
+    
+    for i in range(num_sites):
+        syst[lat(i)] = params["mu"] * np.eye(2)
+    syst[lat.neighbors()] = params["t"] * np.eye(2)  # Use same positive sign
+    
+    lead = kwant.Builder(kwant.TranslationalSymmetry((-1,)))
+    lead[lat(0)] = params["mu"] * np.eye(2)
+    lead[lat.neighbors()] = params["t"] * np.eye(2)  # Use same positive sign
+    
+    syst.attach_lead(lead)
+    syst.attach_lead(lead.reversed())
+    
+    fsyst = syst.finalized()
+    smat_kwant = kwant.smatrix(fsyst, energy)
+    
+    # Check that shapes match
+    assert S.shape == smat_kwant.data.shape, (
+        f"S-matrix shape mismatch: {S.shape} vs {smat_kwant.data.shape}"
+    )
+    
+    # Check that S-matrix is close to Kwant's result
+    # Allow some numerical tolerance
+    np.testing.assert_allclose(np.abs(S), np.abs(smat_kwant.data), rtol=1e-5, atol=1e-10)
+
+
 if __name__ == "__main__":
     # Run basic tests
     test_dense_to_banded()
@@ -186,4 +260,5 @@ if __name__ == "__main__":
     test_scattering_system_basic()
     test_scattering_vs_kwant_matrix()
     test_scattering_system_single_lead()
+    test_smatrix_computation()
     print("All tests passed!")

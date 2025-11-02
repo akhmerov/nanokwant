@@ -152,7 +152,8 @@ def scattering_system(
     
     # Construct the scattering region Hamiltonian as a full matrix first
     # We'll convert to banded at the end after augmenting with lead blocks
-    H_matrix = matrix_hamiltonian(system, num_sites, params, hermitian=False)
+    # Use hermitian=True to ensure we have both forward and backward hoppings
+    H_matrix = matrix_hamiltonian(system, num_sites, params, hermitian=True)
     H_matrix = H_matrix - energy * np.eye(num_sites * dim, dtype=dtype)
     
     # Build lead Hamiltonians
