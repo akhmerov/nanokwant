@@ -29,6 +29,6 @@ ipython = ">=9.0.0,<10"
 pre-commit = ">=4.1.0,<5"
 kwant = ">=1.5.0,<2"
 
-[tool.ruff]
+[tool.ruff.lint]
 # Allow single-letter variable `l` used intentionally for lower bandwidth
 extend-ignore = ["E741"]
