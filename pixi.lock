@@ -111,6 +111,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/noarch/pygments-2.19.1-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pyparsing-3.2.1-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pytest-8.3.5-pyhd8ed1ab_0.conda
+      - conda: https://prefix.dev/conda-forge/noarch/pytest-randomly-3.15.0-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/python-3.13.2-hf636f53_101_cp313.conda
       - conda: https://prefix.dev/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhff2d567_1.conda
       - conda: https://prefix.dev/conda-forge/linux-64/python-mumps-0.0.4-py313hfde6823_1.conda
@@ -1193,7 +1194,7 @@ packages:
 - pypi: ./
   name: nanokwant
   version: 0.1.0
-  sha256: 1e90b36d87ddd754662f0ad4b5a100774e222c44907fd3179d5657894c9612d5
+  sha256: 85a70ec07bb074bec61bbdc2a67a7c7345b3c011846135ffab987d42dc6851af
   requires_python: '>=3.11'
   editable: true
 - conda: https://prefix.dev/conda-forge/linux-64/ncurses-6.5-h2d0b736_3.conda
@@ -1493,6 +1494,19 @@ packages:
   - pkg:pypi/pytest?source=hash-mapping
   size: 259816
   timestamp: 1740946648058
+- conda: https://prefix.dev/conda-forge/noarch/pytest-randomly-3.15.0-pyhd8ed1ab_0.conda
+  sha256: bd1953e4bc20ffd52cfee41b27b3a781ca6e281004d0dd59e2dd60b0192c7a86
+  md5: 203b5d3f85a47940f7ec6b6e1747786e
+  depends:
+  - importlib-metadata >=3.6.0
+  - pytest
+  - python >=3.6
+  license: MIT
+  license_family: MIT
+  purls:
+  - pkg:pypi/pytest-randomly?source=hash-mapping
+  size: 14133
+  timestamp: 1692131735622
 - conda: https://prefix.dev/conda-forge/linux-64/python-3.13.2-hf636f53_101_cp313.conda
   build_number: 101
   sha256: cc1984ee54261cee6a2db75c65fc7d2967bc8c6e912d332614df15244d7730ef
