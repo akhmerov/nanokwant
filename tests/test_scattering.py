@@ -129,10 +129,6 @@ def test_scattering_vs_kwant_matrix():
     # First compute with Kwant
     smat_kwant = kwant_smatrix(fsyst, energy)
     
-    # For comparison, let's check the S-matrix computed by both
-    # First compute with Kwant
-    smat_kwant = kwant_smatrix(fsyst, energy)
-    
     # Check our system can be used to compute something similar
     # The system sizes should be related
     # Convert our banded LHS to dense
