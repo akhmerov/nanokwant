@@ -12,46 +12,8 @@ from .nanokwant import (
     matrix_hamiltonian,
     _hamiltonian_dtype,
     _prepare_param_arrays,
+    _to_banded,
 )
-
-
-def _dense_to_banded(A: np.ndarray) -> tuple[np.ndarray, tuple[int, int]]:
-    """Convert a dense matrix to banded format, detecting the bandwidth.
-
-    Parameters
-    ----------
-    A : np.ndarray
-        Dense matrix to convert.
-
-    Returns
-    -------
-    A_band : np.ndarray
-        Matrix in banded format (diagonal-ordered).
-    (l, u) : tuple of int
-        Lower and upper bandwidth.
-    """
-    m, n = A.shape
-    if m != n:
-        raise ValueError("Matrix must be square")
-
-    # Find the actual bandwidth by looking at non-zero elements
-    l = 0  # noqa: E741
-    u = 0
-    for i in range(n):
-        for j in range(n):
-            if abs(A[i, j]) > 1e-15:
-                if i > j:
-                    l = max(l, i - j)  # noqa: E741
-                else:
-                    u = max(u, j - i)
-
-    # Create banded format
-    A_band = np.zeros((l + u + 1, n), dtype=A.dtype)
-    for i in range(n):
-        for j in range(max(0, i - l), min(n, i + u + 1)):
-            A_band[u + i - j, j] = A[i, j]
-
-    return A_band, (l, u)
 
 
 def scattering_system(
@@ -291,7 +253,6 @@ def scattering_system(
         else:
             rhs_list.append(None)
 
-    # Convert the augmented matrix to banded format
-    lhs_band, (l, u) = _dense_to_banded(H_matrix)
+    lhs_band, (l, u) = _to_banded(H_matrix)
 
     return lhs_band, (l, u), rhs_list, indices_list

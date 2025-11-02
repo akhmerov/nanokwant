@@ -91,10 +91,38 @@ def test_to_banded():
         np.random.rand(3, 5),
         np.random.rand(4, 4),
     ):
-        ab = _to_banded(a)
+        ab, (l, u) = _to_banded(a, shrink=False)
         for i in range(a.shape[0]):
             for j in range(a.shape[1]):
                 assert ab[a.shape[1] - 1 - j + i, j] == a[i, j], (i, j)
+
+
+def test_to_banded_shrink_equivalence():
+    """Ensure `_to_banded(..., shrink=True)` detects bandwidth correctly.
+
+    Mirrors the previous behavior used in scattering tests.
+    """
+    A = np.array(
+        [
+            [1, 2, 0, 0],
+            [3, 4, 5, 0],
+            [0, 6, 7, 8],
+            [0, 0, 9, 10],
+        ],
+        dtype=float,
+    )
+
+    A_band, (l, u) = _to_banded(A)
+
+    assert l == 1
+    assert u == 1
+    assert A_band.shape == (3, 4)
+
+    # Verify the banded format
+    for i in range(4):
+        for j in range(4):
+            if abs(i - j) <= 1:
+                assert abs(A_band[u + i - j, j] - A[i, j]) < 1e-10
 
 
 def test_hamiltonian():

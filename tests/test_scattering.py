@@ -3,33 +3,7 @@
 import numpy as np
 import pytest
 import kwant
-from nanokwant.scattering import scattering_system, _dense_to_banded
-
-
-def test_dense_to_banded():
-    """Test conversion from dense to banded format."""
-    # Test a tridiagonal matrix
-    A = np.array(
-        [
-            [1, 2, 0, 0],
-            [3, 4, 5, 0],
-            [0, 6, 7, 8],
-            [0, 0, 9, 10],
-        ],
-        dtype=float,
-    )
-
-    A_band, (l, u) = _dense_to_banded(A)
-
-    assert l == 1
-    assert u == 1
-    assert A_band.shape == (3, 4)
-
-    # Verify the banded format
-    for i in range(4):
-        for j in range(4):
-            if abs(i - j) <= 1:
-                assert abs(A_band[u + i - j, j] - A[i, j]) < 1e-10
+from nanokwant.scattering import scattering_system
 
 
 def test_scattering_system_validation():
@@ -257,7 +231,6 @@ def test_smatrix_computation():
 
 if __name__ == "__main__":
     # Run basic tests
-    test_dense_to_banded()
     test_scattering_system_validation()
     test_scattering_system_basic()
     test_scattering_vs_kwant_matrix()
