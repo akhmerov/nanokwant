@@ -2,7 +2,11 @@
 __pycache__
 *.pyc
 .ipynb_checkpoints
+*.ipynb
 
 # pixi environments
 .pixi
 *.egg-info
+
+# mkdocs site build
+site/

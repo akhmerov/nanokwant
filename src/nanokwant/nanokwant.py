@@ -18,19 +18,63 @@ def _hamiltonian_dtype(
     return np.result_type(*term_dtypes, *param_dtypes)
 
 
-def _to_banded(a: np.ndarray) -> np.ndarray:
+def _to_banded(
+    a: np.ndarray, *, shrink: bool = True
+) -> tuple[np.ndarray, tuple[int, int]]:
     """Convert a full 2D array to banded format.
 
     The diagonal ordered format is defined as
 
         ab[u + i - j, j] == a[i, j]
+
+    Parameters
+    ----------
+    a : np.ndarray
+        2D matrix to convert (shape (dim, dim)).
+    shrink : bool, optional
+        If True, trim zero-only rows from the top/bottom of the per-term
+        band and also return the detected (l, u) bandwidth in row-offset
+        units. When False (default) the full per-term band is returned.
+
+    Returns
+    -------
+    (ab, (l, u)) : tuple
+        Tuple of the banded matrix and the per-term lower/upper row offsets
+        measured from the central diagonal row. If ``shrink`` is False the
+        full per-term band is returned and the offsets are ``(n-1, n-1)``
+        (i.e. the untrimmed base bandwidth). If ``shrink`` is True the
+        returned band is trimmed of all-zero top/bottom rows and the
+        offsets reflect the trimmed band.
     """
     (m, n) = a.shape
-    m += n - 1
-    ab = np.zeros((m, n), dtype=a.dtype)
+    # full band height (diagonals) for an n x n block is n + n - 1
+    m_full = m + n - 1
+    ab = np.zeros((m_full, n), dtype=a.dtype)
     for i in range(n):
-        ab[n - 1 - i : m - i, i] = a[:, i]
-    return ab
+        ab[n - 1 - i : m_full - i, i] = a[:, i]
+
+    if not shrink:
+        # Return the full per-term band and the base bandwidth offsets
+        return ab, (n - 1, n - 1)
+
+    # Trim zero-only rows from top/bottom.
+    row_mask = np.any(ab != 0, axis=1)
+    if not row_mask.any():
+        # zero matrix -> return a minimal 1xN zero band and zero bandwidths
+        return np.zeros((1, n), dtype=ab.dtype), (0, 0)
+
+    first = int(np.argmax(row_mask))
+    last = int(len(row_mask) - 1 - np.argmax(row_mask[::-1]))
+    banded_trim = ab[first : last + 1]
+
+    # Calculate per-term l/u measured in rows relative to central diagonal
+    base_bandwidth = n - 1
+    top_trim = first
+    bottom_trim = len(row_mask) - 1 - last
+    u_term = base_bandwidth - top_trim
+    l_term = base_bandwidth - bottom_trim
+
+    return banded_trim, (l_term, u_term)
 
 
 def _to_nonhermitian_format(system: HamiltonianType) -> HamiltonianType:
@@ -153,7 +197,6 @@ def _assemble_banded_matrix(
     if not system:
         raise ValueError("system must contain at least one hopping term")
 
-    base_bandwidth = dim - 1
     trimmed_system: dict[int, dict[str, tuple[np.ndarray, int, int]]] = {}
     min_delta = 0
     max_delta = 0
@@ -161,37 +204,18 @@ def _assemble_banded_matrix(
     for hop, terms in system.items():
         trimmed_terms: dict[str, tuple[np.ndarray, int, int]] = {}
         for name, matrix in terms.items():
-            # Convert the small (dim x dim) term matrix to a full banded block
-            # in the diagonal-ordered format used by scipy (ab[u + i - j, j] == a[i,j]).
-            banded_full = _to_banded(matrix)
+            # Convert the small (dim x dim) term matrix to a trimmed per-term
+            # band and obtain its per-term (l,u) measured in rows relative to
+            # the central diagonal row.
+            banded_trim, (l_term, u_term) = _to_banded(matrix)
 
-            # Determine which rows of the per-term band are actually non-zero.
-            # Many physical term matrices are sparse in this representation; by
-            # trimming zero-only rows now we can reduce the global band height.
-            row_mask = np.any(banded_full != 0, axis=1)
-            if not row_mask.any():
-                # This term contributes nothing (zero matrix); skip it.
+            # A completely zero term will return a 1xN zero block with
+            # l_term==u_term==0 — treat that as no contribution.
+            if banded_trim.size == 0 or (
+                banded_trim.shape[0] == 1 and not np.any(banded_trim)
+            ):
                 continue
 
-            # Find the first and last non-empty rows for this term's banded block
-            # and slice the per-term band accordingly. `first` is the top row index
-            # kept (0-based relative to banded_full) and `last` is the bottom.
-            first = int(np.argmax(row_mask))
-            last = int(len(row_mask) - 1 - np.argmax(row_mask[::-1]))
-            banded_trim = banded_full[first : last + 1]
-
-            # How many rows were trimmed from the top/bottom of the per-term band
-            top_trim = first
-            bottom_trim = len(row_mask) - 1 - last
-
-            # Compute this term's effective upper/lower offset (measured in rows)
-            # relative to the central diagonal row index (base_bandwidth).
-            # These will be used to compute the global band extents below.
-            u_term = base_bandwidth - top_trim
-            l_term = base_bandwidth - bottom_trim
-
-            # Save the trimmed per-term band and its per-term l/u so assembly can
-            # place it into the global band without storing many zero rows.
             trimmed_terms[name] = (banded_trim, l_term, u_term)
 
             # Track global min/max deltas (in row-offset units) contributed by
