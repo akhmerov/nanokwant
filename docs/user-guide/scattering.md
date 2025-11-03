@@ -1,3 +1,6 @@
+---
+execute: true
+---
 # Scattering Systems
 
 Nanokwant supports scattering matrix calculations for 1D systems with attached leads.

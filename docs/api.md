@@ -1,3 +1,6 @@
+---
+execute: true
+---
 # API Reference
 
 ## Core Functions
