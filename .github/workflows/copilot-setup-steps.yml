@@ -28,3 +28,4 @@ jobs:
       - name: Install pre-commit and hooks
         run: |
           pixi run pre-commit install
+          pixi run pre-commit install-hooks
