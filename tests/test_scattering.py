@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 import kwant
-from nanokwant.scattering import scattering_system
+from nanokwant.scattering import scattering_system, compute_smatrix
 
 
 def test_scattering_system_validation():
@@ -18,13 +18,15 @@ def test_scattering_system_validation():
     with pytest.raises(ValueError, match="nearest-neighbor"):
         scattering_system(system_bad, 10, params, energy=0.0)
 
-    # System without onsite terms
-    system_no_onsite = {
+    # System with negative hopping (not in Hermitian format)
+    system_negative = {
+        0: {"mu": np.eye(2)},
         1: {"t": np.eye(2)},
+        -1: {"t": np.eye(2)},
     }
 
-    with pytest.raises(ValueError, match="onsite"):
-        scattering_system(system_no_onsite, 10, {"t": 1.0}, energy=0.0)
+    with pytest.raises(ValueError, match="Hermitian format"):
+        scattering_system(system_negative, 10, {"mu": 1.0, "t": 1.0}, energy=0.0)
 
     # System without hopping
     system_no_hop = {
@@ -35,18 +37,40 @@ def test_scattering_system_validation():
         scattering_system(system_no_hop, 10, {"mu": 1.0}, energy=0.0)
 
 
+def test_scattering_without_onsite():
+    """Test that scattering works without onsite terms (zero onsite is OK)."""
+    # System with only hopping, no onsite
+    system = {
+        1: {"t": np.eye(2)},
+    }
+    num_sites = 5
+    params = {"t": 1.0}
+    energy = 0.5
+
+    # This should work now
+    lhs, (l, u), rhs_list, indices_list, nmodes_list = scattering_system(
+        system, num_sites, params, energy, leads="both"
+    )
+
+    assert lhs.ndim == 2
+    assert l >= 0 and u >= 0
+    assert len(rhs_list) == 2
+    assert len(indices_list) == 2
+    assert len(nmodes_list) == 2
+
+
 def test_scattering_system_basic():
     """Test basic construction of a scattering system."""
     # Simple 1D system with constant parameters
     system = {
         0: {"mu": np.eye(2)},
-        1: {"t": -np.eye(2)},
+        1: {"t": np.eye(2)},
     }
     num_sites = 5
     params = {"mu": 0.5, "t": 1.0}
     energy = 0.5
 
-    lhs, (l, u), rhs_list, indices_list = scattering_system(
+    lhs, (l, u), rhs_list, indices_list, nmodes_list = scattering_system(
         system, num_sites, params, energy, leads="both"
     )
 
@@ -57,31 +81,59 @@ def test_scattering_system_basic():
     # Should have 2 leads (left and right)
     assert len(rhs_list) == 2
     assert len(indices_list) == 2
+    assert len(nmodes_list) == 2
 
     # Each RHS should be a matrix
-    for rhs in rhs_list:
-        if rhs is not None:
-            assert rhs.ndim == 2
-            assert rhs.shape[0] == lhs.shape[1]
+    for rhs, nmodes in zip(rhs_list, nmodes_list):
+        assert rhs.ndim == 2
+        assert rhs.shape[0] == lhs.shape[1]
+        assert rhs.shape[1] == nmodes
 
 
-def test_scattering_vs_kwant_matrix():
-    """Test that our scattering system matches Kwant's structure."""
-    # Create a simple system
+def test_scattering_system_single_lead():
+    """Test scattering system with only one lead."""
     system = {
         0: {"mu": np.eye(2)},
-        1: {"t": -np.eye(2)},
+        1: {"t": np.eye(2)},
+    }
+    params = {"mu": 0.5, "t": 1.0}
+    energy = 0.5
+
+    # Left lead only
+    lhs_left, (l, u), rhs_left, idx_left, nmodes_left = scattering_system(
+        system, 5, params, energy, leads="left"
+    )
+    assert len(rhs_left) == 1
+    assert len(idx_left) == 1
+    assert len(nmodes_left) == 1
+
+    # Right lead only
+    lhs_right, (l, u), rhs_right, idx_right, nmodes_right = scattering_system(
+        system, 5, params, energy, leads="right"
+    )
+    assert len(rhs_right) == 1
+    assert len(idx_right) == 1
+    assert len(nmodes_right) == 1
+
+
+def test_smatrix_computation_simple():
+    """Test S-matrix computation with simple system."""
+    system = {
+        0: {"mu": np.eye(2)},
+        1: {"t": np.eye(2)},
     }
     num_sites = 10
     params = {"mu": 0.5, "t": 1.0}
     energy = 0.5
 
-    # Get nanokwant scattering system
-    lhs, (l, u), rhs_list, indices_list = scattering_system(
-        system, num_sites, params, energy, leads="both"
-    )
+    # Compute S-matrix
+    S = compute_smatrix(system, num_sites, params, energy, leads="both")
 
-    # Create equivalent Kwant system
+    # Should be square and unitary
+    assert S.shape[0] == S.shape[1]
+    np.testing.assert_allclose(S @ S.conj().T, np.eye(S.shape[0]), atol=1e-10)
+
+    # Compare with Kwant
     lat = kwant.lattice.chain(norbs=2)
     syst = kwant.Builder()
 
@@ -89,7 +141,6 @@ def test_scattering_vs_kwant_matrix():
         syst[lat(i)] = params["mu"] * np.eye(2)
     syst[lat.neighbors()] = params["t"] * np.eye(2)
 
-    # Create leads
     lead = kwant.Builder(kwant.TranslationalSymmetry((-1,)))
     lead[lat(0)] = params["mu"] * np.eye(2)
     lead[lat.neighbors()] = params["t"] * np.eye(2)
@@ -98,106 +149,31 @@ def test_scattering_vs_kwant_matrix():
     syst.attach_lead(lead.reversed())
 
     fsyst = syst.finalized()
+    smat_kwant = kwant.smatrix(fsyst, energy)
 
-    # Get Kwant's linear system (using the default sparse solver)
-    from kwant.solvers.default import smatrix as kwant_smatrix
+    # Check that shapes match
+    assert S.shape == smat_kwant.data.shape
 
-    # For comparison, let's check the S-matrix computed by both
-    # First compute with Kwant
-    smat_kwant = kwant_smatrix(fsyst, energy)
-
-    # Check our system can be used to compute something similar
-    # The system sizes should be related
-    # Convert our banded LHS to dense
-    n = lhs.shape[1]
-    our_lhs_dense = np.zeros((n, n), dtype=lhs.dtype)
-    for i in range(n):
-        for j in range(max(0, i - l), min(n, i + u + 1)):
-            our_lhs_dense[i, j] = lhs[u + i - j, j]
-
-    # The augmented system should be larger than the scattering region
-    assert n > num_sites * 2, f"Augmented system size {n} should be > {num_sites * 2}"
-
-    print(f"Nanokwant LHS shape: {our_lhs_dense.shape}")
-    print(f"Kwant S-matrix shape: {smat_kwant.data.shape}")
-    print(f"Nanokwant has {len(rhs_list)} RHS matrices")
-
-    # Check that we have the right number of modes
-    assert len(rhs_list) == 2  # two leads
-    assert all(rhs is not None for rhs in rhs_list)  # both have modes
+    # Check that S-matrix magnitude matches
+    np.testing.assert_allclose(np.abs(S), np.abs(smat_kwant.data), rtol=1e-5, atol=1e-10)
 
 
-def test_scattering_system_single_lead():
-    """Test scattering system with only one lead."""
+def test_smatrix_with_evanescent_modes():
+    """Test S-matrix with evanescent modes (different bandwidth orbitals)."""
+    # Use different hopping for different orbitals to create evanescent modes
     system = {
         0: {"mu": np.eye(2)},
-        1: {"t": -np.eye(2)},
-    }
-    params = {"mu": 0.5, "t": 1.0}
-    energy = 0.5
-
-    # Left lead only
-    lhs_left, (l, u), rhs_left, idx_left = scattering_system(
-        system, 5, params, energy, leads="left"
-    )
-    assert len(rhs_left) == 1
-    assert len(idx_left) == 1
-
-    # Right lead only
-    lhs_right, (l, u), rhs_right, idx_right = scattering_system(
-        system, 5, params, energy, leads="right"
-    )
-    assert len(rhs_right) == 1
-    assert len(idx_right) == 1
-
-
-def test_smatrix_computation():
-    """Test that we can compute S-matrix from the scattering system."""
-    system = {
-        0: {"mu": np.eye(2)},
-        1: {"t": np.eye(2)},  # positive hopping
+        1: {"t": np.diag([1.0, 0.1])},  # First orbital: high bandwidth, second: low
     }
     num_sites = 10
     params = {"mu": 0.5, "t": 1.0}
-    energy = 0.5
+    energy = 0.3  # Energy where second orbital has evanescent modes
 
-    # Get nanokwant scattering system
-    lhs, (l, u), rhs_list, indices_list = scattering_system(
-        system, num_sites, params, energy, leads="both"
-    )
+    # This should work and handle evanescent modes correctly
+    S = compute_smatrix(system, num_sites, params, energy, leads="both")
 
-    # Solve the linear system for each incoming lead
-    # The solution gives the outgoing amplitudes
-    solutions = []
-    for rhs in rhs_list:
-        if rhs is not None:
-            # Solve using banded solver
-            from scipy.linalg import solve_banded
-
-            sol = solve_banded((l, u), lhs, rhs)
-            solutions.append(sol)
-
-    # Extract S-matrix elements from the solutions
-    # S[i,j] is the amplitude in lead i from incoming mode in lead j
-
-    # Count total modes
-    total_modes = sum(rhs.shape[1] for rhs in rhs_list if rhs is not None)
-
-    S = np.zeros((total_modes, total_modes), dtype=complex)
-
-    # Fill in the S-matrix
-    col_offset = 0
-    for j, (rhs, sol) in enumerate(zip(rhs_list, solutions)):
-        n_in = rhs.shape[1]
-        row_offset = 0
-        for i, indices in enumerate(indices_list):
-            n_out = len(indices)
-            # Extract the outgoing amplitudes for this lead
-            S[row_offset : row_offset + n_out, col_offset : col_offset + n_in] = sol[
-                indices, :
-            ]
-            row_offset += n_out
-        col_offset += n_in
+    # S-matrix should be unitary
+    np.testing.assert_allclose(S @ S.conj().T, np.eye(S.shape[0]), atol=1e-10)
 
     # Compare with Kwant
     lat = kwant.lattice.chain(norbs=2)
@@ -205,11 +181,11 @@ def test_smatrix_computation():
 
     for i in range(num_sites):
         syst[lat(i)] = params["mu"] * np.eye(2)
-    syst[lat.neighbors()] = params["t"] * np.eye(2)  # Use same positive sign
+    syst[lat.neighbors()] = params["t"] * np.diag([1.0, 0.1])
 
     lead = kwant.Builder(kwant.TranslationalSymmetry((-1,)))
     lead[lat(0)] = params["mu"] * np.eye(2)
-    lead[lat.neighbors()] = params["t"] * np.eye(2)  # Use same positive sign
+    lead[lat.neighbors()] = params["t"] * np.diag([1.0, 0.1])
 
     syst.attach_lead(lead)
     syst.attach_lead(lead.reversed())
@@ -217,23 +193,120 @@ def test_smatrix_computation():
     fsyst = syst.finalized()
     smat_kwant = kwant.smatrix(fsyst, energy)
 
-    # Check that shapes match
-    assert S.shape == smat_kwant.data.shape, (
-        f"S-matrix shape mismatch: {S.shape} vs {smat_kwant.data.shape}"
-    )
+    assert S.shape == smat_kwant.data.shape
+    np.testing.assert_allclose(np.abs(S), np.abs(smat_kwant.data), rtol=1e-5, atol=1e-10)
 
-    # Check that S-matrix is close to Kwant's result
-    # Allow some numerical tolerance
-    np.testing.assert_allclose(
-        np.abs(S), np.abs(smat_kwant.data), rtol=1e-5, atol=1e-10
-    )
+
+@pytest.mark.parametrize("norbs", [2, 3])
+@pytest.mark.parametrize("complex_hopping", [False, True])
+def test_smatrix_randomized(norbs, complex_hopping):
+    """Randomized test with various matrix sizes and complex hoppings."""
+    rng = np.random.default_rng(42)
+    
+    # Generate random Hermitian onsite
+    onsite = rng.standard_normal((norbs, norbs))
+    onsite = onsite + onsite.T  # Make symmetric (will become Hermitian)
+    
+    # Generate random hopping
+    if complex_hopping:
+        hopping = rng.standard_normal((norbs, norbs)) + 1j * rng.standard_normal((norbs, norbs))
+    else:
+        hopping = rng.standard_normal((norbs, norbs))
+    
+    system = {
+        0: {"mu": onsite},
+        1: {"t": hopping},
+    }
+    num_sites = 8
+    params = {"mu": 1.0, "t": 1.0}
+    energy = 0.5
+
+    # Compute S-matrix
+    S = compute_smatrix(system, num_sites, params, energy, leads="both")
+
+    # Should be unitary
+    np.testing.assert_allclose(S @ S.conj().T, np.eye(S.shape[0]), atol=1e-9)
+
+    # Compare with Kwant
+    lat = kwant.lattice.chain(norbs=norbs)
+    syst = kwant.Builder()
+
+    for i in range(num_sites):
+        syst[lat(i)] = params["mu"] * onsite
+    syst[lat.neighbors()] = params["t"] * hopping
+
+    lead = kwant.Builder(kwant.TranslationalSymmetry((-1,)))
+    lead[lat(0)] = params["mu"] * onsite
+    lead[lat.neighbors()] = params["t"] * hopping
+
+    syst.attach_lead(lead)
+    syst.attach_lead(lead.reversed())
+
+    fsyst = syst.finalized()
+    smat_kwant = kwant.smatrix(fsyst, energy)
+
+    assert S.shape == smat_kwant.data.shape
+    np.testing.assert_allclose(np.abs(S), np.abs(smat_kwant.data), rtol=1e-4, atol=1e-8)
+
+
+def test_smatrix_position_dependent():
+    """Test S-matrix with position-dependent parameters."""
+    # Use position-dependent onsite potential
+    system = {
+        0: {"mu": np.eye(2)},
+        1: {"t": np.eye(2)},
+    }
+    num_sites = 10
+
+    # Position-dependent chemical potential - barrier in the middle
+    def mu_func(x):
+        return np.where((x >= 4) & (x <= 6), 2.0, 0.5)
+
+    params = {"mu": mu_func, "t": 1.0}
+    energy = 0.5
+
+    # Compute S-matrix
+    S = compute_smatrix(system, num_sites, params, energy, leads="both")
+
+    # Should be unitary
+    np.testing.assert_allclose(S @ S.conj().T, np.eye(S.shape[0]), atol=1e-10)
+
+    # Compare with Kwant
+    lat = kwant.lattice.chain(norbs=2)
+    syst = kwant.Builder()
+
+    for i in range(num_sites):
+        mu_val = mu_func(np.array([i]))[0]
+        syst[lat(i)] = mu_val * np.eye(2)
+    syst[lat.neighbors()] = params["t"] * np.eye(2)
+
+    lead = kwant.Builder(kwant.TranslationalSymmetry((-1,)))
+    lead[lat(0)] = params["mu"](np.array([0]))[0] * np.eye(2)  # Use edge value
+    lead[lat.neighbors()] = params["t"] * np.eye(2)
+
+    syst.attach_lead(lead)
+    
+    # For right lead, use the edge value
+    lead_right = kwant.Builder(kwant.TranslationalSymmetry((1,)))
+    lead_right[lat(0)] = params["mu"](np.array([num_sites-1]))[0] * np.eye(2)
+    lead_right[lat.neighbors()] = params["t"] * np.eye(2)
+    syst.attach_lead(lead_right.reversed())
+
+    fsyst = syst.finalized()
+    smat_kwant = kwant.smatrix(fsyst, energy)
+
+    assert S.shape == smat_kwant.data.shape
+    np.testing.assert_allclose(np.abs(S), np.abs(smat_kwant.data), rtol=1e-5, atol=1e-10)
 
 
 if __name__ == "__main__":
-    # Run basic tests
     test_scattering_system_validation()
+    test_scattering_without_onsite()
     test_scattering_system_basic()
-    test_scattering_vs_kwant_matrix()
     test_scattering_system_single_lead()
-    test_smatrix_computation()
+    test_smatrix_computation_simple()
+    test_smatrix_with_evanescent_modes()
+    test_smatrix_randomized(2, False)
+    test_smatrix_randomized(3, True)
+    test_smatrix_position_dependent()
     print("All tests passed!")
