@@ -28,7 +28,10 @@ theme:
 
 plugins:
   - search
-  - execute
+  - execute:
+    execute_without_tag:
+    - "*.md"
+    - "*.py"
 
 markdown_extensions:
   - pymdownx.highlight:

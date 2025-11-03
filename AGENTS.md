@@ -1,0 +1,2 @@
+- This project uses `pixi`, to execute commands with pixi use `pixi run <command>` (e.g. `pixi run pytest`).
+- Always install dependencies using pixi CLI (`pixi add <package>` for conda and `pixi add --pypi <package>` for pypi).
