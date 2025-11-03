@@ -12,7 +12,6 @@ from .nanokwant import (
     hamiltonian,
     _hamiltonian_dtype,
     _prepare_param_arrays,
-    _ensure_nonhermitian,
 )
 
 
@@ -23,7 +22,7 @@ def _extract_lead_hamiltonians(
     dtype: np.dtype,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Extract lead cell and hopping Hamiltonians from boundary site.
-    
+
     Parameters
     ----------
     system : HamiltonianType
@@ -34,7 +33,7 @@ def _extract_lead_hamiltonians(
         Index of the boundary site (0 for left, num_sites-1 for right).
     dtype : np.dtype
         Data type for the matrices.
-        
+
     Returns
     -------
     h_cell : np.ndarray
@@ -45,14 +44,14 @@ def _extract_lead_hamiltonians(
     # Get dimension from any term matrix
     first_terms = next(iter(system.values()))
     dim = next(iter(first_terms.values())).shape[0]
-    
+
     # Build cell Hamiltonian from onsite terms
     h_cell = np.zeros((dim, dim), dtype=dtype)
     if 0 in system:
         for term_name, term_matrix in system[0].items():
             val = param_arrays[(0, term_name)][site_idx]
             h_cell += val * term_matrix
-    
+
     # Build hopping Hamiltonian - system should only have hopping length 1
     # since we validated it's in Hermitian format
     h_hop = np.zeros((dim, dim), dtype=dtype)
@@ -63,71 +62,8 @@ def _extract_lead_hamiltonians(
             # which is the last element in the array of length num_sites-1
             val = param_arrays[(1, term_name)][site_idx if site_idx == 0 else -1]
             h_hop += val * term_matrix
-    
+
     return h_cell, h_hop
-
-
-def _glue_banded_matrices(
-    ab1: np.ndarray,
-    l1: int,
-    u1: int,
-    ab2: np.ndarray,
-    l2: int,
-    u2: int,
-    interface_block: np.ndarray,
-) -> tuple[np.ndarray, int, int]:
-    """Glue two banded matrices with an interface coupling block.
-    
-    Constructs the banded representation of:
-    [[A, B],
-     [C, D]]
-    
-    where A is ab1, D is ab2, and B/C are the interface blocks.
-    
-    Parameters
-    ----------
-    ab1 : np.ndarray
-        First banded matrix in diagonal-ordered format.
-    l1, u1 : int
-        Lower and upper bandwidth of ab1.
-    ab2 : np.ndarray
-        Second banded matrix in diagonal-ordered format.
-    l2, u2 : int
-        Lower and upper bandwidth of ab2.
-    interface_block : np.ndarray
-        Interface coupling matrix (dense). Should be shape (n2, n1) where
-        n1 is the size of ab1 and n2 is the size of ab2.
-        
-    Returns
-    -------
-    ab : np.ndarray
-        Combined banded matrix.
-    l, u : int
-        Lower and upper bandwidth of result.
-    """
-    n1 = ab1.shape[1]
-    n2 = ab2.shape[1]
-    n_total = n1 + n2
-    
-    # Determine bandwidths of result
-    # The interface block extends the bandwidth
-    l = max(l1, n2 + l2, interface_block.shape[0])
-    u = max(u1 + n2, u2, interface_block.shape[1])
-    
-    # Create output banded matrix
-    ab = np.zeros((l + u + 1, n_total), dtype=ab1.dtype)
-    
-    # Copy ab1 into top-left
-    for i in range(ab1.shape[0]):
-        for j in range(n1):
-            # ab1[i, j] corresponds to diagonal u1 + i_orig - j_orig
-            # where i_orig, j_orig are the original matrix indices
-            # We need to map this to the new banded format
-            pass  # This is complex, will implement differently
-    
-    # Actually, let me use a simpler approach: convert to dense, glue, convert back
-    # This is OK for the interface blocks which are small
-    raise NotImplementedError("Use simpler dense approach for now")
 
 
 def _augment_with_lead_block(
@@ -140,11 +76,11 @@ def _augment_with_lead_block(
     iface_indices: np.ndarray,
 ) -> tuple[np.ndarray, int, int]:
     """Augment banded Hamiltonian with a lead block.
-    
+
     This converts the banded representation temporarily to dense, augments it,
     and converts back. This is acceptable because the augmented part is small
     (only the evanescent modes).
-    
+
     Parameters
     ----------
     H_band : np.ndarray
@@ -159,7 +95,7 @@ def _augment_with_lead_block(
         Diagonal block for new modes (dense, shape n_modes x n_modes).
     iface_indices : np.ndarray
         Indices of interface sites in current system.
-        
+
     Returns
     -------
     H_band_new : np.ndarray
@@ -173,26 +109,31 @@ def _augment_with_lead_block(
     for i in range(n_current):
         for j in range(max(0, i - l), min(n_current, i + u + 1)):
             H_dense[i, j] = H_band[u + i - j, j]
-    
+
     # Create augmented dense matrix
     n_modes = diag_block.shape[0]
     n_total = n_current + n_modes
     H_aug = np.zeros((n_total, n_total), dtype=H_dense.dtype)
-    
+
     # Copy original Hamiltonian
     H_aug[:n_current, :n_current] = H_dense
-    
+
     # Add coupling blocks at interface
-    H_aug[iface_indices[:, None], n_current + np.arange(n_modes)] = coupling_col[iface_indices]
-    H_aug[n_current + np.arange(n_modes), iface_indices] = coupling_row[:, iface_indices]
-    
+    H_aug[iface_indices[:, None], n_current + np.arange(n_modes)] = coupling_col[
+        iface_indices
+    ]
+    H_aug[n_current + np.arange(n_modes), iface_indices] = coupling_row[
+        :, iface_indices
+    ]
+
     # Add diagonal block
     H_aug[n_current:, n_current:] = diag_block
-    
+
     # Convert back to banded
     from .nanokwant import _to_banded
+
     H_band_new, (l_new, u_new) = _to_banded(H_aug)
-    
+
     return H_band_new, l_new, u_new
 
 
@@ -202,9 +143,7 @@ def scattering_system(
     params: dict,
     energy: float,
     leads: Literal["both", "left", "right"] = "both",
-) -> tuple[
-    np.ndarray, tuple[int, int], list[np.ndarray], list[np.ndarray], list[int]
-]:
+) -> tuple[np.ndarray, tuple[int, int], list[np.ndarray], list[np.ndarray], list[int]]:
     """Construct the scattering system in banded format.
 
     This function constructs a linear system for scattering calculations with
@@ -322,7 +261,9 @@ def scattering_system(
 
     for lead_name, site_idx in lead_configs:
         # Extract lead Hamiltonians
-        h_cell, h_hop = _extract_lead_hamiltonians(system, param_arrays, site_idx, dtype)
+        h_cell, h_hop = _extract_lead_hamiltonians(
+            system, param_arrays, site_idx, dtype
+        )
 
         # Compute modes using Kwant
         prop_modes, stab_modes = kwant_leads.modes(h_cell, h_hop)
@@ -409,7 +350,7 @@ def compute_smatrix(
     leads: Literal["both", "left", "right"] = "both",
 ) -> np.ndarray:
     """Compute the scattering matrix for a system with leads.
-    
+
     Parameters
     ----------
     system : HamiltonianType
@@ -422,19 +363,19 @@ def compute_smatrix(
         Energy at which to compute the S-matrix.
     leads : {"both", "left", "right"}
         Which leads to attach.
-        
+
     Returns
     -------
     S : np.ndarray
         Scattering matrix with shape (total_modes, total_modes).
     """
     from scipy.linalg import solve_banded
-    
+
     # Get the scattering system
     lhs, (l, u), rhs_list, indices_list, nmodes_list = scattering_system(
         system, num_sites, params, energy, leads
     )
-    
+
     # Solve for each incoming lead
     solutions = []
     for rhs in rhs_list:
@@ -443,19 +384,21 @@ def compute_smatrix(
             solutions.append(sol)
         else:
             solutions.append(np.zeros((lhs.shape[1], 0), dtype=lhs.dtype))
-    
+
     # Extract S-matrix elements
     total_modes = sum(nmodes_list)
     S = np.zeros((total_modes, total_modes), dtype=complex)
-    
+
     # Fill in the S-matrix
     col_offset = 0
     for j, (sol, nmodes_j) in enumerate(zip(solutions, nmodes_list)):
         row_offset = 0
         for i, (indices, nmodes_i) in enumerate(zip(indices_list, nmodes_list)):
             # Extract outgoing amplitudes
-            S[row_offset:row_offset + nmodes_i, col_offset:col_offset + nmodes_j] = sol[indices[:nmodes_i], :nmodes_j]
+            S[
+                row_offset : row_offset + nmodes_i, col_offset : col_offset + nmodes_j
+            ] = sol[indices[:nmodes_i], :nmodes_j]
             row_offset += nmodes_i
         col_offset += nmodes_j
-    
+
     return S

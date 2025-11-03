@@ -155,7 +155,9 @@ def test_smatrix_computation_simple():
     assert S.shape == smat_kwant.data.shape
 
     # Check that S-matrix magnitude matches
-    np.testing.assert_allclose(np.abs(S), np.abs(smat_kwant.data), rtol=1e-5, atol=1e-10)
+    np.testing.assert_allclose(
+        np.abs(S), np.abs(smat_kwant.data), rtol=1e-5, atol=1e-10
+    )
 
 
 def test_smatrix_with_evanescent_modes():
@@ -194,7 +196,9 @@ def test_smatrix_with_evanescent_modes():
     smat_kwant = kwant.smatrix(fsyst, energy)
 
     assert S.shape == smat_kwant.data.shape
-    np.testing.assert_allclose(np.abs(S), np.abs(smat_kwant.data), rtol=1e-5, atol=1e-10)
+    np.testing.assert_allclose(
+        np.abs(S), np.abs(smat_kwant.data), rtol=1e-5, atol=1e-10
+    )
 
 
 @pytest.mark.parametrize("norbs", [2, 3])
@@ -202,17 +206,19 @@ def test_smatrix_with_evanescent_modes():
 def test_smatrix_randomized(norbs, complex_hopping):
     """Randomized test with various matrix sizes and complex hoppings."""
     rng = np.random.default_rng(42)
-    
+
     # Generate random Hermitian onsite
     onsite = rng.standard_normal((norbs, norbs))
     onsite = onsite + onsite.T  # Make symmetric (will become Hermitian)
-    
+
     # Generate random hopping
     if complex_hopping:
-        hopping = rng.standard_normal((norbs, norbs)) + 1j * rng.standard_normal((norbs, norbs))
+        hopping = rng.standard_normal((norbs, norbs)) + 1j * rng.standard_normal(
+            (norbs, norbs)
+        )
     else:
         hopping = rng.standard_normal((norbs, norbs))
-    
+
     system = {
         0: {"mu": onsite},
         1: {"t": hopping},
@@ -285,10 +291,10 @@ def test_smatrix_position_dependent():
     lead[lat.neighbors()] = params["t"] * np.eye(2)
 
     syst.attach_lead(lead)
-    
+
     # For right lead, use the edge value
     lead_right = kwant.Builder(kwant.TranslationalSymmetry((1,)))
-    lead_right[lat(0)] = params["mu"](np.array([num_sites-1]))[0] * np.eye(2)
+    lead_right[lat(0)] = params["mu"](np.array([num_sites - 1]))[0] * np.eye(2)
     lead_right[lat.neighbors()] = params["t"] * np.eye(2)
     syst.attach_lead(lead_right.reversed())
 
@@ -296,7 +302,9 @@ def test_smatrix_position_dependent():
     smat_kwant = kwant.smatrix(fsyst, energy)
 
     assert S.shape == smat_kwant.data.shape
-    np.testing.assert_allclose(np.abs(S), np.abs(smat_kwant.data), rtol=1e-5, atol=1e-10)
+    np.testing.assert_allclose(
+        np.abs(S), np.abs(smat_kwant.data), rtol=1e-5, atol=1e-10
+    )
 
 
 if __name__ == "__main__":
